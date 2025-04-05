@@ -1,0 +1,91 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+We use this notebook to acquire our IPUMS data. Note that, while this is a _notebook_ and not a script, you can run this "from top to bottom" for reproducibility.
+
+We start by loading in the libraries:
+
+```{r}
+library(purrr)
+library(ipumsr)
+library(dplyr) # eventually
+```
+
+And then peer through the metadata for relevant datasets:
+
+```{r}
+get_metadata_nhgis(type='datasets')
+```
+
+We identify the following potentially relevant 1940 datasets: `1940_cAge`, `1940_sOcc`, `1940_cPHAE`, `1940_tPH_Major`, `1940_tPH_NYC`, `1940_tPop_HI`. Of these, only `1940_tPH_Major` ended up seeming relevant, so we poked at it's data tables.	
+
+```{r}
+get_metadata_nhgis(dataset='1940_tPH_Major')$data_tables
+```
+
+We select the following data tables:
+
+- NT1   Population                                                            01
+- NT3   Native Born White Population                                          01
+- NT4   Negro Population                                                      01
+- NT5   Occupied Dwelling Units                                               01
+- NT15	Persons 25 Years and Over by Sex by Years of School Completed	        18
+- NT16	Persons 25 Years and Over by Sex by Median Years of School Completed  02
+- NT21  Sex By Labor Force Status                                             04
+- NT22  Sex by Detailed Labor Force Status                                    16
+- NT25	Population by Sex by Occupational Group                               20
+- NT30  Dwelling units by Type of Structure                                   11 
+- NT32  Occupied Dwellings Units by Average Number of Persons per Room        07
+- NT33  Tenant Occupied Dwelling Units by Average Number of Persons per Room  07
+- NT43  Dwelling Units by State of Repair                                     03
+- NT45  Occupied Dwelling Units by Radio Ownership                            03
+- NT46  Occupied Dwelling Units by Refrigeration                              05
+- NT47  Occupied Dwelling Units by Heating                                    03
+
+NT3, and NT4 are chosen to help capture racial characteristics biasing tracts assignment. NT1, NT5 are chosen as measures of population density. NT30, NT43, NT45, NT46, NT47 are chosen to capture the actual status of the units, while NT15, NT16, NT21, NT22, NT25, NT32, and NT33 are chosen to capture economic status. We note in particular that high values in NT33 could indicate ghetto status or exploitation through overpopulated units. 
+
+```{r}
+
+tables <- c("NT1",  "NT2",  "NT4",  "NT5",  "NT15", 
+  "NT16", "NT21", "NT22", "NT25", "NT30", 
+  "NT32", "NT33", "NT43", "NT45", "NT46", 
+  "NT47")
+
+# Make our datasets specification
+dataset <- ds_spec('1940_tPH_Major', data_tables=tables, geog_levels='tract')
+```
+
+Now we turn towards the shapefiles:
+
+```{r}
+get_metadata_nhgis('shapefiles')
+```
+
+According to additional documentation, it's recommended to grab both 1940 shapefiles and compare their alignment with our the post-2010 (in our case 2020) tracts of interest, so we do as such:
+
+```{r}
+# both 1940 tract shapes' specifications
+tl2000 <- ds_spec(name='us_tract_1940_tl2000')
+tl2008 <- ds_spec(name='us_tract_1940_tl2008')
+```
+
+```{r, echo=FALSE}
+# It turns out we submit request for the above data tables and not for the 
+# actual variables. It's weird!
+variables <- map(.x=tables, ~ ipumsr::get_metadata_nhgis(dataset='1940_tPH_Major', data_table=.x)$variables) |>
+  map(~ select(.x, 'description', 'nhgis_code')) |>
+  reduce(rbind)
+
+variables |> print(n=104)
+```
+
+And then we can make our extract request. Note that NHGIS is _weird_, and it's technically possible (and shown in the vignettes) to call `submit_extract` without retaining a hook / easy way to access the submitted extract. We sidestep that by just pipeing.
+
+```{r}
+file <- define_extract_nhgis(description="test dataset, just grabbing A Lot", dataset=dataset, shapefiles = c(tl2000, tl2008)) |> 
+  submit_extract() |>
+  wait_for_extract() |>
+  download_extract('../data/')
+```
